@@ -13,16 +13,16 @@ RH_NRF24 nrf24(D1, D2); // use this for NodeMCU Amica/AdaFruit Huzzah ESP8266 Fe
 // RH_NRF24 nrf24(8, 7); // use this to be electrically compatible with Mirf
 // RH_NRF24 nrf24(8, 10);// For Leonardo, need explicit SS pin
 // RH_NRF24 nrf24(8, 7); // For RFM73 on Anarduino Mini
-int LED = D4; //(D4 - built in)
+int PIN_LED = D4; //(D4 - built in)
+int PIN_BTN = 0;
+int PIN_WIFI_ENABLE = 16;
 
 
-void sendRadioMessage()
+void sendRadioMessage(String action, long id)
 {
-    randomSeed(micros());
-    long randomId = random(1000, 9999);
+    //randomSeed(micros());
 
-
-    String pld = String() + "myid " + randomId;
+    String pld = action + " " + id;
     nrf24.send((uint8_t *)pld.c_str(), pld.length());
     nrf24.waitPacketSent();
     Serial.print("> ");
@@ -35,7 +35,7 @@ void sendRadioMessage()
     uint8_t len = sizeof(buf);
     if (nrf24.waitAvailableTimeout(20))
     {
-        digitalWrite(LED, LOW);
+        digitalWrite(PIN_LED, LOW);
 
         // Should be a reply message for us now
         while (nrf24.recv(buf, &len))
@@ -48,17 +48,49 @@ void sendRadioMessage()
             Serial.print(millis()-sendTime);
             Serial.print(" ms");
             Serial.println();
-            delay(50);
+            delay(50); // make led flashing visible
         }
     }
     else
     {
         Serial.println("NO REPLAY!");
     }
-    digitalWrite(LED, HIGH);
+    digitalWrite(PIN_LED, HIGH);
 
 }
 
+void fpm_wakup_cb_func(void) {
+    Serial.println("Light sleep is over, either because timeout or external interrupt");
+    Serial.flush();
+}
+
+
+void goToLightSleep()
+{
+    // for timer-based light sleep to work, the os timers need to be disconnected
+    extern os_timer_t *timer_list;
+    timer_list = nullptr;
+
+    // enable light sleep
+    wifi_fpm_set_sleep_type(LIGHT_SLEEP_T);
+    wifi_fpm_open();
+
+
+    wifi_fpm_set_wakeup_cb(fpm_wakup_cb_func);
+
+    // optional: register one or more wake-up interrupts. the chip
+    // will wake from whichever (timeout or interrupt) occurs earlier
+    //gpio_pin_wakeup_enable(D2, GPIO_PIN_INTR_HILEVEL);
+
+    // sleep for 10 seconds
+    long sleepTimeMilliSeconds = 10e3;
+    // light sleep function requires microseconds
+    wifi_fpm_do_sleep(sleepTimeMilliSeconds * 1000);
+
+    // timed light sleep is only entered when the sleep command is
+    // followed by a delay() that is at least 1ms longer than the sleep
+    delay(sleepTimeMilliSeconds + 1);    
+}
 
 void setupWifiMode()
 {
@@ -101,10 +133,11 @@ void setup()
     Serial.print("Transmitter Started");
     Serial.println();
 
-    pinMode(LED, OUTPUT);
-    digitalWrite(LED, HIGH); // turn led off 
+    pinMode(PIN_LED, OUTPUT);
+    digitalWrite(PIN_LED, HIGH); // turn led off 
 
-    pinMode(0, INPUT_PULLUP); // flash button
+    pinMode(PIN_BTN, INPUT_PULLUP); // flash button
+    pinMode(PIN_WIFI_ENABLE, INPUT_PULLDOWN_16);
 
 
     nrf24.init();
@@ -119,9 +152,18 @@ void setup()
         Serial.println("setRF failed");
     }
 
-    sendRadioMessage();
+    sendRadioMessage("start", random(1000, 9999));
 
-    setupWifiMode();
+
+    if(digitalRead(PIN_WIFI_ENABLE) == HIGH){
+        sendRadioMessage("WIFI_MODE", random(1000, 9999));
+        setupWifiMode();
+    }
+    else {
+        sendRadioMessage("RADIO_MODE", random(1000, 9999));
+        //goToLightSleep();
+    }
+
 }
 
 
@@ -130,15 +172,15 @@ void setup()
 
 void radioLoop()
 {
-    int buttonPressed = digitalRead(0) == LOW;
+    int buttonPressed = digitalRead(PIN_BTN) == LOW;
     
     if(buttonPressed)
     {
-        sendRadioMessage();
+        sendRadioMessage("btn1", random(1000, 9999));
     }
     
 
-    while(digitalRead(0) == LOW) // while button pressed, sleep
+    while(digitalRead(PIN_BTN) == LOW) // while button pressed, sleep
         delay(1);
 }
 
